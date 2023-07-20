@@ -788,6 +788,44 @@ pub trait SystemExt: Sized + Debug + Default + Send + Sync {
         self.refresh_process_specifics(pid, ProcessRefreshKind::everything())
     }
 
+    /// Refreshes specified processes.
+    /// 
+    /// ⚠️ Only available on macOS
+    ///
+    /// ⚠️ If you wanna update more than one processes at the same time on macOS,
+    /// [`refresh_process_ex`] and [`refresh_process_ex_specifics`] are your choices.
+    ///
+    /// ```no_run
+    /// use sysinfo::{System, SystemExt};
+    ///
+    /// let mut s = System::new_all();
+    /// s.refresh_process_ex([Pid::from(1337), Pid(1338)]);
+    /// ```
+    #[cfg(all(target_os = "macos", not(feature = "apple-sandbox")))]
+    fn refresh_process_ex<I: AsRef<[Pid]>>(&mut self, pids: I) {
+        self.refresh_process_ex_specifics(pids, ProcessRefreshKind::everything())
+    }
+
+    /// Refreshes specified processes and updates the specified information.
+    ///
+    /// ⚠️ Only available on macOS
+    /// 
+    /// ⚠️ If you wanna update more than one processes at the same time,
+    /// [`refresh_process_ex`] and [`refresh_process_ex_specifics`] are your choices.
+    ///
+    /// ```no_run
+    /// use sysinfo::{ProcessRefreshKind, System, SystemExt};
+    ///
+    /// let mut s = System::new_all();
+    /// s.refresh_process_ex_specifics([Pid::from(1337), Pid(1338)], ProcessRefreshKind::new());
+    /// ```
+    #[cfg(all(target_os = "macos", not(feature = "apple-sandbox")))]
+    fn refresh_process_ex_specifics<I: AsRef<[Pid]>>(
+        &mut self,
+        pids: I,
+        refresh_kind: ProcessRefreshKind,
+    );
+
     /// Refreshes *only* the process corresponding to `pid`. Returns `false` if the process doesn't
     /// exist (it will **NOT** be removed from the processes if it doesn't exist anymore). If it
     /// isn't listed yet, it'll be added.

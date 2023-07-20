@@ -136,6 +136,55 @@ fn get_now() -> u64 {
         .unwrap_or(0)
 }
 
+impl System {
+    #[cfg(any(target_os = "ios", feature = "apple-sandbox"))]
+    fn refresh_processes_specifics_impl(&mut self, _refresh_kind: ProcessRefreshKind) {}
+
+    #[cfg(all(target_os = "macos", not(feature = "apple-sandbox")))]
+    fn refresh_processes_specifics_impl<I: AsRef<[Pid]>>(
+        &mut self,
+        pid: I,
+        refresh_kind: ProcessRefreshKind,
+    ) {
+        use crate::utils::into_iter;
+
+        let pids = pid.as_ref();
+
+        let now = get_now();
+        let arg_max = get_arg_max();
+        let port = self.port;
+        let time_interval = self.clock_info.as_mut().map(|c| c.get_time_interval(port));
+        let entries: Vec<Process> = {
+            let wrap = &Wrap(UnsafeCell::new(&mut self.process_list));
+
+            #[cfg(feature = "multithread")]
+            use rayon::iter::ParallelIterator;
+
+            into_iter(pids)
+                .flat_map(|pid| {
+                    match update_process(
+                        wrap,
+                        *pid,
+                        arg_max as size_t,
+                        time_interval,
+                        now,
+                        refresh_kind,
+                        false,
+                    ) {
+                        Ok(x) => x,
+                        _ => None,
+                    }
+                })
+                .collect()
+        };
+        entries.into_iter().for_each(|entry| {
+            self.process_list.insert(entry.pid(), entry);
+        });
+        self.process_list
+            .retain(|_, proc_| std::mem::replace(&mut proc_.updated, false));
+    }
+}
+
 impl SystemExt for System {
     const IS_SUPPORTED: bool = true;
     const SUPPORTED_SIGNALS: &'static [Signal] = supported_signals();
@@ -276,8 +325,6 @@ impl SystemExt for System {
 
     #[cfg(all(target_os = "macos", not(feature = "apple-sandbox")))]
     fn refresh_processes_specifics(&mut self, refresh_kind: ProcessRefreshKind) {
-        use crate::utils::into_iter;
-
         unsafe {
             let count = libc::proc_listallpids(::std::ptr::null_mut(), 0);
             if count < 1 {
@@ -285,44 +332,22 @@ impl SystemExt for System {
             }
         }
         if let Some(pids) = get_proc_list() {
-            let now = get_now();
-            let arg_max = get_arg_max();
-            let port = self.port;
-            let time_interval = self.clock_info.as_mut().map(|c| c.get_time_interval(port));
-            let entries: Vec<Process> = {
-                let wrap = &Wrap(UnsafeCell::new(&mut self.process_list));
-
-                #[cfg(feature = "multithread")]
-                use rayon::iter::ParallelIterator;
-
-                into_iter(pids)
-                    .flat_map(|pid| {
-                        match update_process(
-                            wrap,
-                            pid,
-                            arg_max as size_t,
-                            time_interval,
-                            now,
-                            refresh_kind,
-                            false,
-                        ) {
-                            Ok(x) => x,
-                            _ => None,
-                        }
-                    })
-                    .collect()
-            };
-            entries.into_iter().for_each(|entry| {
-                self.process_list.insert(entry.pid(), entry);
-            });
-            self.process_list
-                .retain(|_, proc_| std::mem::replace(&mut proc_.updated, false));
+            self.refresh_processes_specifics_impl(pids, refresh_kind)
         }
     }
 
     #[cfg(any(target_os = "ios", feature = "apple-sandbox"))]
     fn refresh_process_specifics(&mut self, _pid: Pid, _refresh_kind: ProcessRefreshKind) -> bool {
         false
+    }
+
+    #[cfg(all(target_os = "macos", not(feature = "apple-sandbox")))]
+    fn refresh_process_ex_specifics<I: AsRef<[Pid]>>(
+        &mut self,
+        pids: I,
+        refresh_kind: ProcessRefreshKind,
+    ) {
+        self.refresh_processes_specifics_impl(pids, refresh_kind);
     }
 
     #[cfg(all(target_os = "macos", not(feature = "apple-sandbox")))]
